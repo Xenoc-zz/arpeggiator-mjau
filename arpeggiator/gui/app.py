@@ -27,6 +27,13 @@ from ..core.arpeggio_engine import (
 )
 from ..core.midi_out import MidiOutput
 
+ESP32_AVAILABLE = False
+try:
+    from ..hardware.esp32_bridge import ESP32Bridge
+    ESP32_AVAILABLE = True
+except ImportError:
+    ESP32Bridge = None
+
 
 PRESET_DIR = os.path.expanduser("~/.arpeggiator_presets")
 
@@ -88,6 +95,11 @@ class ArpeggiatorGUI:
         presets_frame = ttk.Frame(nb, padding="10")
         nb.add(presets_frame, text="💾 Presets")
         self._build_presets_tab(presets_frame)
+
+        # Tab 3: ESP32
+        self.esp32_frame = ttk.Frame(nb, padding="10")
+        nb.add(self.esp32_frame, text="🔌 ESP32")
+        self._build_esp32_tab(self.esp32_frame)
 
         # -- Bottom: Preview + Transport --
         bottom = ttk.Frame(main)
@@ -284,6 +296,179 @@ class ArpeggiatorGUI:
         self._refresh_presets()
 
     # ------------------------------------------------------------------
+    # ESP32 TAB
+    # ------------------------------------------------------------------
+
+    def _build_esp32_tab(self, parent):
+        """Build the ESP32 connection tab."""
+        parent.columnconfigure(1, weight=1)
+
+        self.esp32 = None
+        self.esp32_connected = False
+
+        # --- Connection ---
+        conn_frame = ttk.LabelFrame(parent, text="Connection", padding="8")
+        conn_frame.grid(row=0, column=0, columnspan=3, sticky=tk.EW, pady=(0, 8))
+
+        ttk.Label(conn_frame, text="Port:").grid(row=0, column=0, sticky=tk.W)
+        self.esp32_port_var = tk.StringVar(value="")
+        self.esp32_port_combo = ttk.Combobox(conn_frame, textvariable=self.esp32_port_var,
+                                              state="readonly", width=28)
+        self.esp32_port_combo.grid(row=0, column=1, sticky=tk.EW, padx=6)
+
+        self.esp32_connect_btn = ttk.Button(conn_frame, text="🔌 Connect",
+                                             command=self._esp32_toggle_connect, width=14)
+        self.esp32_connect_btn.grid(row=0, column=2, padx=(6, 0))
+
+        ttk.Button(conn_frame, text="🔄 Scan",
+                   command=self._esp32_scan_ports, width=8).grid(row=0, column=3, padx=(6, 0))
+
+        self.esp32_status_var = tk.StringVar(value="Not connected")
+        ttk.Label(conn_frame, textvariable=self.esp32_status_var,
+                  font=("Helvetica", 9), foreground="gray").grid(row=1, column=0,
+                                                                    columnspan=4, sticky=tk.W,
+                                                                    pady=(4, 0))
+
+        # --- LED Mode ---
+        led_frame = ttk.LabelFrame(parent, text="LED Mode", padding="8")
+        led_frame.grid(row=1, column=0, columnspan=3, sticky=tk.EW, pady=(0, 8))
+
+        self.esp32_led_mode_var = tk.StringVar(value="notes")
+        for i, (mode, label) in enumerate([
+            ("notes", "🎵 Notes (follows arpeggio)"),
+            ("bpm", "💓 BPM Pulse"),
+            ("direction", "🌀 Direction Pattern"),
+        ]):
+            rb = ttk.Radiobutton(led_frame, text=label, variable=self.esp32_led_mode_var,
+                                  value=mode, command=self._esp32_send_mode)
+            rb.grid(row=i, column=0, sticky=tk.W, pady=2)
+
+        ttk.Label(led_frame, text="LED Brightness:").grid(row=3, column=0, sticky=tk.W, pady=(6, 0))
+        self.esp32_brightness_var = tk.IntVar(value=80)
+        brightness_scale = ttk.Scale(led_frame, from_=0, to=255,
+                                      variable=self.esp32_brightness_var,
+                                      orient=tk.HORIZONTAL, length=300)
+        brightness_scale.grid(row=4, column=0, sticky=tk.EW, pady=2)
+
+        # --- Sensor Feedback ---
+        sensor_frame = ttk.LabelFrame(parent, text="Sensor Data (from ESP32)", padding="8")
+        sensor_frame.grid(row=2, column=0, columnspan=3, sticky=tk.EW, pady=(0, 8))
+
+        self.esp32_pot_var = tk.StringVar(value="—")
+        ttk.Label(sensor_frame, text="Potentiometer:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(sensor_frame, textvariable=self.esp32_pot_var,
+                  font=("Courier", 12, "bold")).grid(row=0, column=1, sticky=tk.W, padx=12)
+
+        self.esp32_btn_var = tk.StringVar(value="—")
+        ttk.Label(sensor_frame, text="Button:").grid(row=0, column=2, sticky=tk.W, padx=(24, 0))
+        ttk.Label(sensor_frame, textvariable=self.esp32_btn_var,
+                  font=("Courier", 12, "bold")).grid(row=0, column=3, sticky=tk.W, padx=12)
+
+        # Pot mapping hint
+        ttk.Label(sensor_frame, text="Pot → BPM:",
+                  font=("Helvetica", 8, "italic")).grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
+        self.esp32_pot_bpm_var = tk.StringVar(value="—")
+        ttk.Label(sensor_frame, textvariable=self.esp32_pot_bpm_var,
+                  font=("Helvetica", 8)).grid(row=1, column=1, sticky=tk.W, pady=(4, 0))
+
+        # --- Instructions ---
+        instr = ttk.Label(parent,
+                          text="💡 Connect your ESP32 via USB, then click Scan + Connect.\n"
+                                "The firmware auto-flashes? You'll need to copy esp32_firmware/ to your ESP32 first.\n"
+                                "Once connected, your arpeggio notes will light up NeoPixels!",
+                          font=("Helvetica", 8), foreground="gray", justify=tk.LEFT)
+        instr.grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=(4, 0))
+
+        # Scan on open
+        self._esp32_scan_ports()
+
+    def _esp32_scan_ports(self):
+        """Scan for ESP32 serial ports."""
+        if not ESP32_AVAILABLE:
+            self.esp32_status_var.set("⚠️  pyserial not installed — run: uv add pyserial")
+            return
+        ports = ESP32Bridge.list_ports()
+        self.esp32_port_combo["values"] = ports
+        if ports and not self.esp32_port_var.get():
+            self.esp32_port_var.set(ports[0])
+        if not ports:
+            self.esp32_status_var.set("🔍 No serial ports found. Plug in your ESP32!")
+        else:
+            self.esp32_status_var.set(f"🔌 Found {len(ports)} port(s)")
+
+    def _esp32_toggle_connect(self):
+        """Connect or disconnect ESP32."""
+        if self.esp32_connected:
+            self._esp32_disconnect()
+        else:
+            self._esp32_connect()
+
+    def _esp32_connect(self):
+        if not ESP32_AVAILABLE:
+            messagebox.showwarning("No pyserial",
+                "Install pyserial: uv add pyserial")
+            return
+
+        port = self.esp32_port_var.get()
+        if not port:
+            messagebox.showinfo("No port", "Select a serial port first!")
+            return
+
+        self.esp32 = ESP32Bridge(port)
+        if self.esp32.connect():
+            self.esp32_connected = True
+            self.esp32_connect_btn.config(text="🔌 Disconnect")
+            self.esp32_status_var.set(f"✅ Connected to {port}")
+
+            # Register callbacks
+            self.esp32.on_pot(self._esp32_on_pot)
+            self.esp32.on_button(self._esp32_on_btn)
+
+            # Send initial state
+            self._esp32_sync_state()
+
+            # Start auto-sync timer (every 500ms send current state)
+            self._esp32_sync_state()
+        else:
+            self.esp32_status_var.set(f"❌ Failed to connect to {port}")
+
+    def _esp32_disconnect(self):
+        if self.esp32:
+            self.esp32.disconnect()
+        self.esp32_connected = False
+        self.esp32_connect_btn.config(text="🔌 Connect")
+        self.esp32_status_var.set("🔌 Disconnected")
+
+    def _esp32_on_pot(self, value: int):
+        """Handle potentiometer change from ESP32."""
+        self.esp32_pot_var.set(str(value))
+        # Map 0-4095 to BPM 40-200
+        bpm = 40 + int((value / 4095) * 160)
+        self.esp32_pot_bpm_var.set(f"⇢ {bpm} BPM")
+        # Auto-update BPM in UI
+        self.bpm_var.set(bpm)
+        self._on_change()
+
+    def _esp32_on_btn(self, pin: int, state: int):
+        """Handle button press from ESP32."""
+        self.esp32_btn_var.set(f"Pin {pin}: {'Pressed' if state == 0 else 'Released'}")
+
+    def _esp32_send_mode(self):
+        """Send LED mode to ESP32."""
+        if self.esp32 and self.esp32_connected:
+            mode = self.esp32_led_mode_var.get()
+            self.esp32._send(f"MODE:{mode.upper()}")
+
+    def _esp32_sync_state(self):
+        """Send current arpeggiator state to ESP32."""
+        if not (self.esp32 and self.esp32_connected):
+            return
+        cfg = self._get_config()
+        self.esp32.send_bpm(self.bpm_var.get())
+        self.esp32.send_direction(cfg.direction.value)
+        self.esp32.send_scale(cfg.scale_name)
+
+    # ------------------------------------------------------------------
     # EVENTS
     # ------------------------------------------------------------------
 
@@ -291,6 +476,7 @@ class ArpeggiatorGUI:
         """Called when any control changes."""
         self._update_labels()
         self._update_preview()
+        self._esp32_sync_state()
 
     def _update_labels(self):
         """Update value labels for sliders."""
