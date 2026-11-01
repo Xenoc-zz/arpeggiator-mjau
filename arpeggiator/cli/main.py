@@ -18,7 +18,8 @@ from ..core.progressions import (
     PROGRESSION_PRESETS, PROGRESSION_PRESETS_7TH, get_preset,
 )
 from ..core.treatments import (
-    Treatment, ToneSelector, OctaveMode, OrnamentConfig, RHYTHM_PRESETS,
+    Treatment, ToneSelector, OctaveMode, PatternScope, OrnamentConfig,
+    RHYTHM_PRESETS,
 )
 
 
@@ -99,6 +100,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Add grace notes on accented steps")
     trt.add_argument("--approach-notes", action="store_true",
                      help="Add chromatic approach into each chord")
+    trt.add_argument("--scope", default="per_chord",
+                     choices=[s.value for s in PatternScope],
+                     help="per_chord (pattern restarts on each chord) or "
+                          "global (pattern runs continuously, tones shift)")
 
     return parser
 
@@ -138,6 +143,7 @@ def main():
         rhythm_spec=_resolve_rhythm(args),
         tone_selector=ToneSelector(args.tones),
         octave_mode=OctaveMode(args.octave_mode),
+        pattern_scope=PatternScope(args.scope),
         ornament=OrnamentConfig(
             grace_notes=args.grace_notes,
             approach_notes=args.approach_notes,

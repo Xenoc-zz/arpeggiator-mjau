@@ -18,7 +18,7 @@ from .music_theory import Scale, Note, SCALE_PATTERNS, midi_to_note_name
 from .chords import Chord
 from .progressions import Progression, ProgressionStep
 from .treatments import (
-    Treatment, ToneSelector, OctaveMode, RhythmStep,
+    Treatment, ToneSelector, OctaveMode, PatternScope, RhythmStep,
     parse_rhythm, rhythm_at, select_tones, apply_octave_mode,
     shape_velocity, apply_grace_notes, chromatic_approach,
 )
@@ -186,8 +186,16 @@ class ArpeggioEngine:
     ) -> list[ArpeggioEvent]:
         """Generate arpeggio events spanning a chord progression.
 
-        A GLOBAL pattern is applied across the whole progression; only the
-        chord tones shift as each chord arrives.
+        Behavior depends on `treatment.pattern_scope`:
+
+            PER_CHORD (default) — the direction pattern restarts on every
+                chord, so each chord gets a complete gesture.
+
+            GLOBAL — the pattern index is carried across chord boundaries;
+                only the underlying chord tones change (ostinato feel).
+
+        Per-chord overrides on and individual ProgressionStep (direction,
+        octave range, tone selector, rhythm, velocity boost) are honored.
         """
         cfg = config or self.config
         tr = treatment or Treatment()
@@ -195,57 +203,101 @@ class ArpeggioEngine:
         if not progression.steps:
             return []
 
-        rhythm_steps = tr.rhythm_steps
         step_beats = 4.0 / cfg.rate_divider
+        global_step_counter = 0   # Only used in GLOBAL scope
 
         events: list[ArpeggioEvent] = []
         time_cursor = 0.0
 
         for chord_idx, step in enumerate(progression.steps):
             chord = step.chord
-            chord_duration = step.duration
-            num_steps_for_chord = max(1, int(round(chord_duration / step_beats)))
+            num_steps_for_chord = max(1, int(round(step.duration / step_beats)))
 
-            chord_events = self._generate_for_chord(
+            # Fold this step's overrides into effective settings
+            eff_cfg, eff_tr = self._apply_override(cfg, tr, step.override)
+
+            chord_events, used_steps = self._generate_for_chord(
                 chord=chord,
-                cfg=cfg,
-                tr=tr,
-                rhythm_steps=rhythm_steps,
+                cfg=eff_cfg,
+                tr=eff_tr,
                 step_beats=step_beats,
                 num_steps=num_steps_for_chord,
                 time_offset=time_cursor,
                 chord_index=chord_idx,
-                is_last_chord=(chord_idx == len(progression.steps) - 1),
-                next_chord=(
-                    progression.steps[chord_idx + 1].chord
-                    if chord_idx + 1 < len(progression.steps) else None
+                pattern_start=(
+                    global_step_counter
+                    if eff_tr.pattern_scope == PatternScope.GLOBAL
+                    else 0
                 ),
+                velocity_boost=(step.override.velocity_boost
+                                if step.override else 0),
             )
             events.extend(chord_events)
-            time_cursor += chord_duration
+
+            if eff_tr.pattern_scope == PatternScope.GLOBAL:
+                global_step_counter += used_steps
+
+            time_cursor += step.duration
 
         return events
+
+    def _apply_override(self, cfg: ArpeggioConfig, tr: Treatment,
+                        override) -> tuple[ArpeggioConfig, Treatment]:
+        """Return (config, treatment) with per-chord overrides folded in.
+
+        Returns the originals untouched when there's nothing to override.
+        """
+        if override is None:
+            return cfg, tr
+
+        import dataclasses
+
+        new_cfg = cfg
+        cfg_changes = {}
+        if override.direction is not None:
+            cfg_changes["direction"] = PatternDirection(override.direction)
+        if override.octave_range is not None:
+            cfg_changes["octave_range"] = override.octave_range
+        if cfg_changes:
+            new_cfg = dataclasses.replace(cfg, **cfg_changes)
+
+        new_tr = tr
+        tr_changes = {}
+        if override.tone_selector is not None:
+            tr_changes["tone_selector"] = ToneSelector(override.tone_selector)
+        if override.octave_mode is not None:
+            tr_changes["octave_mode"] = OctaveMode(override.octave_mode)
+        if override.rhythm_spec is not None:
+            tr_changes["rhythm_spec"] = override.rhythm_spec
+        if tr_changes:
+            new_tr = dataclasses.replace(tr, **tr_changes)
+
+        return new_cfg, new_tr
 
     def _generate_for_chord(
         self,
         chord: Chord,
         cfg: ArpeggioConfig,
         tr: Treatment,
-        rhythm_steps: list[RhythmStep],
         step_beats: float,
         num_steps: int,
         time_offset: float,
         chord_index: int,
-        is_last_chord: bool,
-        next_chord: Optional[Chord],
-    ) -> list[ArpeggioEvent]:
-        """Generate events for a single chord."""
+        pattern_start: int = 0,
+        velocity_boost: int = 0,
+    ) -> tuple[list[ArpeggioEvent], int]:
+        """Generate events for a single chord.
+
+        Returns (events, steps_consumed) so the caller can advance a global
+        pattern cursor when pattern_scope == GLOBAL.
+        """
+        rhythm_steps = tr.rhythm_steps
         note_pool = self._build_chord_note_pool(chord, cfg, tr)
         if not note_pool:
-            return []
+            return [], num_steps
 
         idx_sequence = self._direction_indices(
-            len(note_pool), num_steps, cfg, chord_index
+            len(note_pool), num_steps, cfg, chord_index, pattern_start
         )
 
         events: list[ArpeggioEvent] = []
@@ -262,6 +314,8 @@ class ArpeggioEngine:
             if tr.humanize_velocity > 0:
                 jitter = int(random.uniform(-1, 1) * tr.humanize_velocity * 20)
                 vel = max(1, min(127, vel + jitter))
+            if velocity_boost:
+                vel = max(1, min(127, vel + velocity_boost))
 
             start = time_offset + local_step * step_beats
             if cfg.swing > 0 and local_step % 2 == 1:
@@ -308,7 +362,7 @@ class ArpeggioEngine:
                 chord_index=chord_index,
             ))
 
-        return events
+        return events, num_steps
 
     def _build_chord_note_pool(
         self, chord: Chord, cfg: ArpeggioConfig, tr: Treatment
@@ -337,22 +391,29 @@ class ArpeggioEngine:
         return [m for m in pool if 0 <= m <= 127]
 
     def _direction_indices(self, pool_size: int, num_steps: int,
-                           cfg: ArpeggioConfig, chord_index: int) -> list[int]:
-        """Build the sequence of pool indices according to direction."""
+                           cfg: ArpeggioConfig, chord_index: int,
+                           pattern_start: int = 0) -> list[int]:
+        """Build the sequence of pool indices according to direction.
+
+        `pattern_start` lets a caller continue a pattern where the previous
+        chord left off (used by PatternScope.GLOBAL). It shifts the reading
+        position into the underlying cyclic pattern for UP/DOWN/UP_DOWN etc.
+        """
         if pool_size <= 0:
             return []
         d = cfg.direction
 
         if d == PatternDirection.UP:
-            return [i % pool_size for i in range(num_steps)]
+            return [(pattern_start + i) % pool_size for i in range(num_steps)]
         if d == PatternDirection.DOWN:
-            return [pool_size - 1 - (i % pool_size) for i in range(num_steps)]
+            return [pool_size - 1 - ((pattern_start + i) % pool_size)
+                    for i in range(num_steps)]
         if d == PatternDirection.UP_DOWN:
             pat = list(range(pool_size)) + list(range(pool_size - 2, 0, -1))
-            return [pat[i % len(pat)] for i in range(num_steps)]
+            return [pat[(pattern_start + i) % len(pat)] for i in range(num_steps)]
         if d == PatternDirection.DOWN_UP:
             pat = list(range(pool_size - 1, -1, -1)) + list(range(1, pool_size - 1))
-            return [pat[i % len(pat)] for i in range(num_steps)]
+            return [pat[(pattern_start + i) % len(pat)] for i in range(num_steps)]
         if d == PatternDirection.RANDOM:
             return [random.randint(0, pool_size - 1) for _ in range(num_steps)]
         if d == PatternDirection.RANDOM_WALK:

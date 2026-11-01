@@ -10,6 +10,7 @@ from arpeggiator.core import (
     ArpeggioEngine, ArpeggioConfig, PatternDirection,
     Treatment, ToneSelector, OctaveMode, OrnamentConfig,
     note_name_to_midi, midi_to_note_name,
+    Progression, ProgressionStep, ChordOverride,
 )
 
 
@@ -155,6 +156,88 @@ def test_ornaments_approach():
             and e.note.midi == g.note.midi + 1
         ]
         assert matching, f"Grace {g.note.midi} has no target a semitone above"
+
+
+def test_pattern_scope_per_chord_restarts():
+    """PER_CHORD: every chord should start on the same pool index (its root)."""
+    from arpeggiator.core import PatternScope
+    scale = Scale("C", "Major", 3)
+    prog = normalize_octaves(parse_roman_progression("ii7 V7 I7", scale, seventh=True))
+    engine = ArpeggioEngine()
+    cfg = ArpeggioConfig(direction=PatternDirection.UP, rate_divider=4, octave_range=1)
+    tr = Treatment(pattern_scope=PatternScope.PER_CHORD)
+    events = engine.generate_progression(prog, cfg, tr)
+
+    for ci, step in enumerate(prog.steps):
+        first = [e for e in events if e.chord_index == ci][0]
+        chord_root = step.chord.midi_notes()[0]
+        assert first.note.midi == chord_root, (
+            f"PER_CHORD chord {ci} should start on root {chord_root}, "
+            f"got {first.note.midi}"
+        )
+
+
+def test_pattern_scope_global_continues():
+    """GLOBAL: later chords should NOT always start on their root."""
+    from arpeggiator.core import PatternScope
+    scale = Scale("C", "Major", 3)
+    prog = normalize_octaves(parse_roman_progression("ii7 V7 I7", scale, seventh=True))
+    engine = ArpeggioEngine()
+    cfg = ArpeggioConfig(direction=PatternDirection.UP_DOWN, rate_divider=4, octave_range=1)
+    tr = Treatment(pattern_scope=PatternScope.GLOBAL)
+    events = engine.generate_progression(prog, cfg, tr)
+
+    # The second chord should NOT begin on its root (pattern continues)
+    second_first = [e for e in events if e.chord_index == 1][0]
+    g7_root = prog.steps[1].chord.midi_notes()[0]
+    assert second_first.note.midi != g7_root, (
+        "GLOBAL mode should carry the pattern across the chord boundary"
+    )
+
+
+def test_per_chord_override_direction():
+    """A per-chord override should change only that chord's direction."""
+    from arpeggiator.core import ProgressionStep, ChordOverride
+    scale = Scale("C", "Major", 3)
+    base = normalize_octaves(parse_roman_progression("ii7 V7 I7", scale, seventh=True))
+    steps = [
+        ProgressionStep(base.steps[0].chord, 4.0,
+                        ChordOverride(direction="up")),
+        ProgressionStep(base.steps[1].chord, 4.0,
+                        ChordOverride(direction="down")),
+    ]
+    prog = Progression(steps, name="test")
+
+    engine = ArpeggioEngine()
+    cfg = ArpeggioConfig(direction=PatternDirection.UP, rate_divider=2, octave_range=1)
+    events = engine.generate_progression(prog, cfg, Treatment())
+
+    up_notes = [e.note.midi for e in events if e.chord_index == 0 and not e.is_grace]
+    down_notes = [e.note.midi for e in events if e.chord_index == 1 and not e.is_grace]
+
+    assert up_notes == sorted(up_notes), f"Override 'up' not ascending: {up_notes}"
+    assert down_notes == sorted(down_notes, reverse=True), \
+        f"Override 'down' not descending: {down_notes}"
+
+
+def test_per_chord_override_velocity_boost():
+    """velocity_boost should raise that chord's velocities above baseline."""
+    from arpeggiator.core import ProgressionStep, ChordOverride
+    scale = Scale("C", "Major", 3)
+    base = normalize_octaves(parse_roman_progression("I V", scale))
+    steps = [
+        ProgressionStep(base.steps[0].chord, 4.0, None),
+        ProgressionStep(base.steps[1].chord, 4.0, ChordOverride(velocity_boost=30)),
+    ]
+    prog = Progression(steps, name="test")
+
+    engine = ArpeggioEngine()
+    cfg = ArpeggioConfig(direction=PatternDirection.UP, rate_divider=2, octave_range=1)
+    events = engine.generate_progression(prog, cfg, Treatment())
+
+    v0 = max(e.velocity for e in events if e.chord_index == 0)
+    v1 = max(e.velocity for e in events if e.chord_index == 1)
+    assert v1 > v0, f"Boosted chord should be louder: {v0} vs {v1}"
 
 
 def run_all():

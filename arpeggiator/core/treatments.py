@@ -155,6 +155,21 @@ class OctaveMode(str, Enum):
     CONVERGING = "converging"   # first half up, second half low
 
 
+class PatternScope(str, Enum):
+    """Whether the direction pattern restarts on each chord.
+
+    PER_CHORD — pattern restarts on every chord. Each chord gets a complete
+                gesture, so harmonic changes are clearly articulated. This is
+                the musically standard behavior when arpeggiating a progression.
+
+    GLOBAL    — pattern runs continuously across chord boundaries; only the
+                underlying chord tones shift. Gives a hypnotic, ostinato feel
+                (trance, minimalism) at the cost of harmonic clarity.
+    """
+    PER_CHORD = "per_chord"
+    GLOBAL = "global"
+
+
 def apply_octave_mode(notes: list[int], mode: OctaveMode,
                       num_octaves: int = 2) -> list[int]:
     """Transform a note list according to an octave-spread mode."""
@@ -249,6 +264,7 @@ class Treatment:
     octave_mode: OctaveMode = OctaveMode.LINEAR
     ornament: OrnamentConfig = field(default_factory=OrnamentConfig)
     humanize_velocity: float = 0.0   # 0-1, random velocity jitter
+    pattern_scope: PatternScope = PatternScope.PER_CHORD
 
     @property
     def rhythm_steps(self) -> list[RhythmStep]:

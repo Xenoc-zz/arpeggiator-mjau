@@ -13,10 +13,29 @@ from .chords import Chord, parse_chord, diatonic_chords
 
 
 @dataclass(frozen=True)
+class ChordOverride:
+    """Per-chord overrides applied when arpeggiating a progression step.
+
+    Any field left as None inherits from the global Treatment/Config.
+    This is what lets a V7 go up while the vi goes down, etc.
+
+    Import-safe: uses plain strings/enums to avoid circular imports with
+    the treatments module; the engine coerces them.
+    """
+    direction: Optional[str] = None        # PatternDirection value, e.g. "down"
+    octave_range: Optional[int] = None
+    tone_selector: Optional[str] = None    # ToneSelector value
+    octave_mode: Optional[str] = None      # OctaveMode value
+    rhythm_spec: Optional[str] = None
+    velocity_boost: int = 0                # e.g. +10 to accent a cadence chord
+
+
+@dataclass(frozen=True)
 class ProgressionStep:
     """One chord in a progression."""
     chord: Chord
     duration: float = 4.0   # In beats (4 = one bar in 4/4)
+    override: Optional[ChordOverride] = None
 
     @property
     def label(self) -> str:

@@ -10,13 +10,13 @@ from .chords import (
     diatonic_chords, parse_chord, ROMAN_NUMERALS,
 )
 from .progressions import (
-    Progression, ProgressionStep,
+    Progression, ProgressionStep, ChordOverride,
     parse_roman_progression, parse_chord_progression,
     PROGRESSION_PRESETS, PROGRESSION_PRESETS_7TH,
     get_preset, list_presets, normalize_octaves,
 )
 from .treatments import (
-    Treatment, ToneSelector, OctaveMode, RhythmStep,
+    Treatment, ToneSelector, OctaveMode, PatternScope, RhythmStep,
     RHYTHM_PRESETS, parse_rhythm, rhythm_at,
     select_tones, apply_octave_mode, OrnamentConfig,
 )
@@ -36,12 +36,12 @@ __all__ = [
     "Chord", "ChordQuality", "CHORD_INTERVALS", "CHORD_LABELS",
     "diatonic_chords", "parse_chord", "ROMAN_NUMERALS",
     # progressions
-    "Progression", "ProgressionStep",
+    "Progression", "ProgressionStep", "ChordOverride",
     "parse_roman_progression", "parse_chord_progression",
     "PROGRESSION_PRESETS", "PROGRESSION_PRESETS_7TH",
     "get_preset", "list_presets", "normalize_octaves",
     # treatments
-    "Treatment", "ToneSelector", "OctaveMode", "RhythmStep",
+    "Treatment", "ToneSelector", "OctaveMode", "PatternScope", "RhythmStep",
     "RHYTHM_PRESETS", "parse_rhythm", "rhythm_at",
     "select_tones", "apply_octave_mode", "OrnamentConfig",
     # engine
