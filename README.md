@@ -5,14 +5,35 @@ Works as a **standalone app**, **CLI tool**, or **importable module**.
 
 ## Features
 
+### Music theory
 - **18+ scales & modes** — Major, Minor, Dorian, Phrygian, Blues, Pentatonic, Whole Tone, Diminished...
-- **8 direction patterns** — Up, Down, Up & Down, Random, Random Walk, Chord, Ordered Up
-- **Real MIDI output** — Send to any connected MIDI device via `mido` + `python-rtmidi`
-- **Save/load presets** — JSON-based preset system
-- **Save to MIDI file** — Standard `.mid` files
-- **Swing, Gate, Humanize** controls
-- **GUI** — tkinter-based (no extra deps!)
-- **CLI** — Full featured command line interface
+- **30+ chord qualities** — triads, 7ths, 9ths, 11ths, 13ths, sus, dim, aug, altered
+- **Diatonic harmony** — auto-derive I-ii-iii-IV-V-vi-vii from any scale
+- **Roman-numeral progressions** — write `ii7 V7 I7` and it builds Dm7-G7-Cmaj7
+- **Explicit chords** — write `Cmaj7 Am7 Dm7 G7` directly
+- **12 progression presets** — Pop, Jazz, Andalusian, Canon, Blues, minor rock...
+
+### Arpeggio engine
+- **9 direction patterns** — Up, Down, Up & Down, Down & Up, Random, Random Walk,
+  Chord, Ordered Up, Block
+- **Global pattern across progressions** — the pattern locks, chord tones shift
+- **Rhythm patterns** — gallop, tresillo, clave, breakbeat, triplet swing, or custom
+  using `-` (normal), `x` (accent), `_` (ghost), `=` (legato), `.` (rest)
+- **Chord-tone selection** — all, root only, no 5th, shell voicings, top tones
+- **Octave modes** — linear, octave-up, root-bass, expanding, converging
+- **Ornaments** — grace notes, chromatic approach notes
+- **Dynamics** — accent shaping, humanize jitter, velocity arch
+
+### I/O
+- **Real MIDI output** — any device via `mido` + `python-rtmidi`
+- **MIDI input** — read chords live from a controller (e.g. AKAI MPK261)
+- **MIDI file save** — standard `.mid`
+- **ESP32 bridge** — NeoPixel LED visualizer + sensor input
+
+### Interfaces
+- **GUI** — tkinter (no extra deps)
+- **CLI** — full-featured with preview, save, play
+- **Library** — import `arpeggiator.core`, everything is pure data
 
 ## Quick Start
 
@@ -22,18 +43,43 @@ cd arpeggiator
 # Run the GUI
 uv run arpeggiator-gui
 
-# Preview notes from CLI
-uv run arpeggiator --preview --scale "Dorian" --root D --direction "Up & Down" --range 2
+# Plain scale arpeggio (classic mode)
+uv run arpeggiator --preview --scale Dorian --root D --direction "Up & Down"
 
-# Save to MIDI file
-uv run arpeggiator --scale "Blues" --root A --direction "Random Walk" --save blues_arpeggio.mid
+# Chord progression, roman numerals
+uv run arpeggiator --progression "ii7 V7 I7" --root C --tones shell --preview
 
-# List MIDI ports
+# Chord progression, explicit chords + gallop rhythm
+uv run arpeggiator --chords "Cmaj7 Am7 Dm7 G7" --rhythm Gallop --preview
+
+# With ornaments, save to file
+uv run arpeggiator --preset "i-VII-VI-VII (Andalusian)" --root A \
+    --scale "Natural Minor" --approach-notes --save andalusian.mid
+
+# List everything available
+uv run arpeggiator --list-presets
 uv run arpeggiator --list-ports
-
-# Play via MIDI
-uv run arpeggiator --scale "Harmonic Minor" --root A --bpm 140
 ```
+
+## CLI Reference
+
+### Progressions
+| Flag | Meaning |
+|------|---------|
+| `--progression, -g` | Roman numerals: `"I V vi IV"` |
+| `--chords, -c` | Explicit: `"Cmaj7 Am7 Dm7 G7"` |
+| `--preset, -k` | Named preset (see `--list-presets`) |
+| `--no-normalize` | Keep original chord octaves |
+
+### Treatments
+| Flag | Meaning |
+|------|---------|
+| `--rhythm` | Rhythm preset name |
+| `--rhythm-spec` | Custom: `"x-.-x---x-.-x---"` |
+| `--tones` | `all`, `shell`, `no_fifth`, `root`, `root_5`, `top_tones` |
+| `--octave-mode` | `linear`, `octave_up`, `root_bass`, `expanding`, `converging` |
+| `--grace-notes` | Grace notes on accented steps |
+| `--approach-notes` | Chromatic lead-in into each chord |
 
 ## Project Structure
 

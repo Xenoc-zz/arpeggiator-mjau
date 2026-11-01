@@ -6,3 +6,7 @@ venv/
 dist/
 build/
 .DS_Store
+
+# Generated MIDI output
+*.mid
+*.midi
