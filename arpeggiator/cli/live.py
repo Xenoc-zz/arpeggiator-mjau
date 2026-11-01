@@ -26,7 +26,9 @@ from ..core.progressions import (
 )
 from ..core.treatments import Treatment, PatternScope
 from ..core.midi_out import MidiOutput
+from ..core.midi_in import MidiInput
 from ..core.player import ProgressionPlayer
+from ..core.capture_session import ChordCaptureSession, CaptureConfig
 
 
 PRESET_LIST = sorted(list(PROGRESSION_PRESETS) + list(PROGRESSION_PRESETS_7TH))
@@ -58,6 +60,12 @@ def build_live_parser():
     p.add_argument("--scope", default="per_chord",
                    choices=["per_chord", "global"])
     p.add_argument("--midi-port", "-p", default="")
+    p.add_argument("--midi-in", "-i", default="",
+                   help="MIDI keyboard input port (e.g. MPK261)")
+    p.add_argument("--capture-beats", type=float, default=4.0,
+                   help="Beats per captured chord (default 4 = one bar)")
+    p.add_argument("--list-ports", action="store_true",
+                   help="List MIDI input/output ports and exit")
     return p
 
 
@@ -113,8 +121,61 @@ def _build_treatment(args, treatment=None):
     )
 
 
+def _start_capture(args, player, initial_progression):
+    """Wire a MIDI keyboard so played chords become the next progression."""
+    midi_in = MidiInput(args.midi_in)
+    cfg = CaptureConfig(beats_per_chord=args.capture_beats, auto_build_at=3)
+    session = ChordCaptureSession(midi_in, cfg)
+
+    state = {"held": []}
+
+    def on_held(notes):
+        state["held"] = notes
+
+    def on_chord(chord, idx):
+        remaining = cfg.auto_build_at - (idx + 1)
+        tag = " -> building progression" if remaining <= 0 else \
+              f" ({remaining} more)"
+        print(f"\r\n  captured: {chord.label}{tag}")
+
+    def on_progression(prog):
+        labels = " - ".join(s.chord.label for s in prog.steps)
+        print(f"\r\n  capturing complete -> {labels}")
+        player.queue_next(normalize_octaves(prog, 48, 72))
+
+    session.on_held = on_held
+    session.on_chord = on_chord
+    session.on_progression = on_progression
+
+    if not session.start():
+        print(f"  Could not open MIDI input: {args.midi_in}")
+        print("  Try: arpeggiator-live --list-ports")
+        return None
+
+    print(f"  MIDI input connected: {args.midi_in}")
+    return session
+
+
 def main():
     args = build_live_parser().parse_args()
+
+    # --- List ports and exit ---
+    if args.list_ports:
+        import mido
+        ins = mido.get_input_names()
+        outs = mido.get_output_names()
+        print("MIDI INPUT ports (keyboards):")
+        for p in ins:
+            print(f"  - {p}")
+        if not ins:
+            print("  (none)")
+        print()
+        print("MIDI OUTPUT ports (synths):")
+        for p in outs:
+            print(f"  - {p}")
+        if not outs:
+            print("  (none)")
+        return
 
     # --- MIDI output ---
     port = args.midi_port
@@ -158,12 +219,20 @@ def main():
     player.on_chord = on_chord
     player.on_swap = on_swap
 
+    # --- Live keyboard capture ---
+    session = None
+    if args.midi_in:
+        session = _start_capture(args, player, progression)
+
     # --- Show preset menu ---
     print()
     print("  Looping. Presets:")
     for i, name in enumerate(PRESET_LIST[:9], start=1):
         print(f"    {i}. {name}")
     print()
+    if session:
+        print(f"  LIVE CAPTURE: play {CaptureConfig().auto_build_at} chords and "
+              f"it becomes the next progression.")
     print("  Commands: <1-9> preset | g <romans> | c <chords> | "
           "b <bpm> | s <scope> | d <dir> | q  quit")
     print()
@@ -222,6 +291,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if session is not None:
+            session.stop()
         player.stop()
         print("\n\n  Stopped. Woof.")
 
