@@ -30,9 +30,17 @@ Works as a **standalone app**, **CLI tool**, or **importable module**.
 - **MIDI file save** — standard `.mid`
 - **ESP32 bridge** — NeoPixel LED visualizer + sensor input
 
+### Performance
+- **ProgressionPlayer** — loops a progression with beat-accurate timing
+- **Live swaps** — change progression mid-performance, quantized to the loop
+  boundary so it never lands mid-chord
+- **Callbacks** — `on_chord`, `on_loop`, `on_swap`, plus beat listeners
+  for UI/ESP32 sync
+
 ### Interfaces
 - **GUI** — tkinter (no extra deps)
 - **CLI** — full-featured with preview, save, play
+- **Live CLI** — interactive loop mode with hot-swapping
 - **Library** — import `arpeggiator.core`, everything is pure data
 
 ## Quick Start
@@ -61,6 +69,41 @@ uv run arpeggiator --list-presets
 uv run arpeggiator --list-ports
 ```
 
+## Live Loop Mode
+
+Loop a progression and swap it while it plays — changes are quantized to the
+loop boundary, so they never land in the middle of a chord.
+
+```bash
+uv run arpeggiator-live --preset "ii7-V7-I7 (Jazz)" --root C --bpm 120 --tones shell
+```
+
+While running:
+
+| Type | Effect |
+|------|--------|
+| `1`..`9` | swap to preset N |
+| `g I V vi IV` | swap to a roman-numeral progression |
+| `c Dm7 G7 Cmaj7` | swap to explicit chords |
+| `b 140` | change tempo |
+| `s global` | switch pattern scope live |
+| `d up_down` | change direction |
+| `q` | quit |
+
+Programmatically:
+
+```python
+from arpeggiator.core import ProgressionPlayer
+
+player = ProgressionPlayer(midi_output=midi)
+player.bpm = 120
+player.load(progression, config, treatment)
+player.on_chord = lambda idx, chord, t: print(chord.label)
+player.start()
+player.queue_next(other_progression)   # swaps at next loop boundary
+player.stop()
+```
+
 ## CLI Reference
 
 ### Progressions
@@ -80,6 +123,33 @@ uv run arpeggiator --list-ports
 | `--octave-mode` | `linear`, `octave_up`, `root_bass`, `expanding`, `converging` |
 | `--grace-notes` | Grace notes on accented steps |
 | `--approach-notes` | Chromatic lead-in into each chord |
+| `--scope` | `per_chord` (default) or `global` |
+
+### Pattern scope: which one do I want?
+
+| | `per_chord` (default) | `global` |
+|---|---|---|
+| Every chord starts on its root | yes | no |
+| Harmonic changes audible | clearly | camouflaged |
+| Continuity / hypnotic groove | resets per chord | continuous |
+| Good for | jazz, pop, most music | trance, minimalism, ostinato |
+
+Example (`ii7 V7 I7`, up & down, one note per chord):
+
+```
+per_chord:  D3  G3  C3     <- each chord announces itself
+ global:    D3  B3  G3     <- pattern continues across changes
+```
+
+Any chord can also override the global settings individually:
+
+```python
+from arpeggiator.core import ProgressionStep, ChordOverride
+
+ProgressionStep(chord, 4.0, ChordOverride(
+    direction="down", tone_selector="shell", velocity_boost=20,
+))
+```
 
 ## Project Structure
 

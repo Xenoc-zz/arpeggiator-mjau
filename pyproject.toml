@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 arpeggiator = "arpeggiator.cli.main:main"
+arpeggiator-live = "arpeggiator.cli.live:main"
 arpeggiator-gui = "arpeggiator.gui.app:main"
 
 [tool.uv]

@@ -26,6 +26,7 @@ from .arpeggio_engine import (
 )
 from .midi_out import MidiOutput
 from .midi_in import MidiInput, ChordCapture, CapturedChord
+from .player import ProgressionPlayer, PlayerState
 
 __all__ = [
     # music theory
@@ -49,4 +50,6 @@ __all__ = [
     "PatternDirection", "PATTERN_DIRECTION_NAMES",
     # io
     "MidiOutput", "MidiInput", "ChordCapture", "CapturedChord",
+    # playback
+    "ProgressionPlayer", "PlayerState",
 ]
